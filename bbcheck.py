@@ -477,11 +477,23 @@ def parse_bz_done_files(
 
     # Parse files
     bz_metadata = {}  # type: typing.Dict[str, typing.List[BzdoneMetadata]]
+    total_record_count = 0
+    non_version5_record_count = 0
+    non_version5_records = {}  # type: typing.Dict[str, typing.List[str]]
     for bzdone_file_path in bzdone_file_paths:
         with open(bzdone_file_path, "r", encoding="utf-8", errors="ignore") as file_handler:
             reader = csv.reader(file_handler, delimiter="\t")
             for row in reader:
+                total_record_count += 1
                 try:
+                    record_version = row[0]
+                    # isnumeric check below to skip any padding '#' entries
+                    if record_version.isnumeric() and record_version != "5":
+                        if bzdone_file_path not in non_version5_records:
+                            non_version5_records[bzdone_file_path] = []
+                        non_version5_records[bzdone_file_path].append(",".join(row))
+                        non_version5_record_count += 1
+                        continue
                     file_path = row[13]
                     date_time = row[3]
                     instruction = row[1]
@@ -494,6 +506,23 @@ def parse_bz_done_files(
                     )
                 except IndexError:
                     log.warning("IndexError in file '%s', row data: '%s'", bzdone_file_path, row)
+
+    # Report any non-V5 records to user
+    if non_version5_record_count:
+        log.warning(
+            "This script is only compatible with 'Version 5' log records (the standard used by"
+            " Backblaze clients since October 2014). %s of the %s total records parsed were not"
+            " version 5, and have therefore not been processed (run script in debug mode for full"
+            " listing of skipped records)",
+            non_version5_record_count,
+            total_record_count,
+        )
+        for bzdone_file_path, records in non_version5_records.items():
+            log.debug(
+                "'%s' has non-V5 rows which were not processed, as follows:", bzdone_file_path
+            )
+            for record in records:
+                log.debug(record)
 
     results = {}  # type: typing.Dict[str, typing.Union[str, int]]
     # For every file path recorded in Backblaze logs, sort to get the most recent entries, and

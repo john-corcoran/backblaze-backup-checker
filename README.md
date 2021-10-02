@@ -12,6 +12,8 @@ Python 3.7 or later is required, with the `tqdm` progress bar module installed (
 
 This script has been tested using Backblaze client version 7.0.2.470 on macOS 11.5, and client version 8.0.0.517 on Windows 10 20H2.
 
+This script is only compatible with 'Version 5' log records (the standard used by Backblaze clients since October 2014). Any log records that are in an older format will not be processed.
+
 ## Script behaviour
 
 Backblaze configuration and log data, as well as files in source folders, are opened in read-only mode and will not be modified.
