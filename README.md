@@ -60,7 +60,7 @@ Flags can be viewed using: `python3 bbcheck.py --help`, and are as follows:
 - `-o [str]` or `--output [str]`: folder to write check results to (if not specified, results will be written to the current working folder).
 - `-b [str]` or `--bzdata-folder [str]`: by default, the script will attempt to read Backblaze configuration and log data from standard client install locations for Windows and Mac. An alternative path to the `bzdata` folder may be provided with this flag.
 - `-s` or `--only-check-size`: by default, SHA1 hash values will be generated for the integrity check for files <= 100MB in size. Hash data may take a long time to generate for large source folders; this flag sets the script to instead check integrity using file size metadata, which should execute quickly (but is not a true integrity check and is therefore less reliable).
-- `--hash-files [str ... str]`: instead of generating SHA1 hash data during script execution, hash file(s) created using the `hash` mode in [Vericopy](https://github.com/john-corcoran/internetarchive-downloader) may be used as a lookup. This approach allows for quick successive executions of this script, and is reliable on condition that files within the source folders are not changed between script executions.
+- `--hash-files [str ... str]`: instead of generating SHA1 hash data during script execution, hash file(s) created using the `hash` mode in [Vericopy](https://github.com/john-corcoran/vericopy) may be used as a lookup. This approach allows for quick successive executions of this script, and is reliable on condition that files within the source folders are not changed between script executions.
 
 Usage example (Windows) incorporating flags:
 
