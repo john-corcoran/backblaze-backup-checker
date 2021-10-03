@@ -3,7 +3,6 @@
 """Check Backblaze logs against files in source folders to confirm data has been backed up OK"""
 
 import argparse
-import csv
 import dataclasses
 import datetime
 import hashlib
@@ -12,6 +11,7 @@ import operator
 import os
 import pathlib
 import platform
+import re
 import typing
 import xml.etree.ElementTree
 
@@ -26,6 +26,19 @@ class BzdoneMetadata:
     instruction: str
     sha1_value: str
     size: int
+
+
+@dataclasses.dataclass
+class BzdoneRow:
+    """Dataclass for each raw row/line in bz_done log files"""
+
+    file: str
+    content: str
+    row_number: int
+    malformed: bool
+    version: str
+    row_contained_nulls: bool
+    recovered_from_null_row_with_regex: bool
 
 
 @dataclasses.dataclass
@@ -464,6 +477,66 @@ def get_file_paths_and_total_size(
     return sorted(files), size, files_failing_filter
 
 
+def read_bz_done_file(bzdone_file_path: str) -> typing.Iterable[BzdoneRow]:
+    """Yield bz_done records after performing error/corruption checking"""
+    legitimate_record_structure = (
+        ".{1}\t.{1}\t.{3}\t[0-9]{14}\t.{83}\t.{3}\t.{16}\t.{9}\t.{40}\t.{16}\t.{16}\t.+\t[0-9]+\t.+"
+    )
+    with open(bzdone_file_path, "r", encoding="utf-8", errors="ignore") as file_handler:
+        row_number = 0
+        for row in file_handler:
+            row_number += 1
+            row_regex_findall = re.findall(legitimate_record_structure, row)
+            if "\0" not in row and len(row_regex_findall) == 1:
+                yield BzdoneRow(
+                    file=bzdone_file_path,
+                    content=row,
+                    row_number=row_number,
+                    malformed=False,
+                    version=row[0],
+                    row_contained_nulls=False,
+                    recovered_from_null_row_with_regex=False,
+                )
+            else:
+                # Try and salvage legitimate record(s) from the corrupted line
+                if re.match(legitimate_record_structure, row):
+                    recoverable_records = []
+                    recoverable_records.append(
+                        BzdoneRow(
+                            file=bzdone_file_path,
+                            content=row.replace("\0", "[NUL]"),
+                            row_number=row_number,
+                            malformed=True,
+                            version=row[0],
+                            row_contained_nulls="\0" in row,
+                            recovered_from_null_row_with_regex=False,
+                        )
+                    )
+                    for hit in row_regex_findall:
+                        recoverable_records.append(
+                            BzdoneRow(
+                                file=bzdone_file_path,
+                                content=hit,
+                                row_number=row_number,
+                                malformed=False,
+                                version=row[0],
+                                row_contained_nulls="\0" in row,
+                                recovered_from_null_row_with_regex=True,
+                            )
+                        )
+                    yield from recoverable_records
+                else:
+                    yield BzdoneRow(
+                        file=bzdone_file_path,
+                        content=row.replace("\0", "[NUL]"),
+                        row_number=row_number,
+                        malformed=True,
+                        version=row[0],
+                        row_contained_nulls="\0" in row,
+                        recovered_from_null_row_with_regex=False,
+                    )
+
+
 def parse_bz_done_files(
     bzdone_file_paths: typing.List[str], size_flag: bool = False
 ) -> typing.Optional[typing.Dict[str, typing.Union[str, int]]]:
@@ -479,33 +552,68 @@ def parse_bz_done_files(
     bz_metadata = {}  # type: typing.Dict[str, typing.List[BzdoneMetadata]]
     total_record_count = 0
     non_version5_record_count = 0
-    non_version5_records = {}  # type: typing.Dict[str, typing.List[str]]
+    non_version5_records = {}  # type: typing.Dict[str, typing.List[BzdoneRow]]
+    malformed_rows = {}  # type: typing.Dict[str, typing.List[BzdoneRow]]
+    recovered_rows = {}  # type: typing.Dict[str, typing.List[BzdoneRow]]
     for bzdone_file_path in bzdone_file_paths:
-        with open(bzdone_file_path, "r", encoding="utf-8", errors="ignore") as file_handler:
-            reader = csv.reader(file_handler, delimiter="\t")
-            for row in reader:
-                total_record_count += 1
-                try:
-                    record_version = row[0]
-                    # isnumeric check below to skip any padding '#' entries
-                    if record_version.isnumeric() and record_version != "5":
-                        if bzdone_file_path not in non_version5_records:
-                            non_version5_records[bzdone_file_path] = []
-                        non_version5_records[bzdone_file_path].append(",".join(row))
-                        non_version5_record_count += 1
-                        continue
-                    file_path = row[13]
-                    date_time = row[3]
-                    instruction = row[1]
-                    sha1_value = row[8]
-                    size = int(row[12])
-                    if file_path not in bz_metadata:
-                        bz_metadata[file_path] = []
-                    bz_metadata[file_path].append(
-                        BzdoneMetadata(date_time, instruction, sha1_value, size)
-                    )
-                except IndexError:
-                    log.warning("IndexError in file '%s', row data: '%s'", bzdone_file_path, row)
+        for bzdone_row in read_bz_done_file(bzdone_file_path):
+            total_record_count += 1
+            # isnumeric check below to skip any padding '#' entries
+            if bzdone_row.version.isnumeric() and bzdone_row.version != "5":
+                if bzdone_file_path not in non_version5_records:
+                    non_version5_records[bzdone_file_path] = []
+                non_version5_records[bzdone_file_path].append(bzdone_row)
+                non_version5_record_count += 1
+                continue
+            # Record any corrupted rows for reporting after bz_done parsing complete
+            elif bzdone_row.malformed:
+                if bzdone_file_path not in malformed_rows:
+                    malformed_rows[bzdone_file_path] = []
+                malformed_rows[bzdone_file_path].append(bzdone_row)
+                continue
+            elif bzdone_row.recovered_from_null_row_with_regex:
+                if bzdone_file_path not in recovered_rows:
+                    recovered_rows[bzdone_file_path] = []
+                recovered_rows[bzdone_file_path].append(bzdone_row)
+            row = bzdone_row.content.strip().split("\t")
+            try:
+                file_path = row[13]
+                date_time = row[3]
+                instruction = row[1]
+                sha1_value = row[8]
+                size = int(row[12])
+                if file_path not in bz_metadata:
+                    bz_metadata[file_path] = []
+                bz_metadata[file_path].append(
+                    BzdoneMetadata(date_time, instruction, sha1_value, size)
+                )
+            except IndexError:
+                log.warning("IndexError in file '%s', row data: '%s'", bzdone_file_path, row)
+
+    # Report any malformed rows to user
+    if malformed_rows:
+        log.warning(
+            "Malformed rows were found in bz_done log data - current understanding is that this"
+            " is caused by occasional data corruption. %s of the %s total rows parsed were"
+            " malformed; %s records were recovered from these rows. Run script in debug"
+            " mode to see malformed data",
+            sum(len(v) for v in malformed_rows.values()),
+            total_record_count,
+            sum(len(v) for v in recovered_rows.values()),
+        )
+        for bzdone_file_path, malformed_records in malformed_rows.items():
+            recoverable_records = recovered_rows.get(
+                bzdone_file_path, []
+            )  # type: typing.List[BzdoneRow]
+            log.debug(
+                "'%s' has %s corrupted rows from which %s records were succesfully recovered -"
+                " corrupted rows as follows (null characters replaced with '[NUL]' string)",
+                bzdone_file_path,
+                len(malformed_records),
+                len(recoverable_records),
+            )
+            for malformed_record in malformed_records:
+                log.debug(malformed_record)
 
     # Report any non-V5 records to user
     if non_version5_record_count:
@@ -517,12 +625,14 @@ def parse_bz_done_files(
             non_version5_record_count,
             total_record_count,
         )
-        for bzdone_file_path, records in non_version5_records.items():
+        for bzdone_file_path, v5_records in non_version5_records.items():
             log.debug(
-                "'%s' has non-V5 rows which were not processed, as follows:", bzdone_file_path
+                "'%s' has %s non-V5 rows which were not processed, as follows:",
+                bzdone_file_path,
+                len(v5_records),
             )
-            for record in records:
-                log.debug(record)
+            for v5_record in v5_records:
+                log.debug(v5_record)
 
     results = {}  # type: typing.Dict[str, typing.Union[str, int]]
     # For every file path recorded in Backblaze logs, sort to get the most recent entries, and
@@ -982,7 +1092,7 @@ def check_backup(
 
 
 def main() -> None:
-    """Captures args via argparse and [add functionality]"""
+    """Captures args via argparse and forwards to core logic in check_backup"""
     run_time = datetime.datetime.now()
     datetime_string = run_time.strftime("%Y%m%d_%H%M%S")
 
