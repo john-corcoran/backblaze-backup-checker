@@ -219,7 +219,7 @@ def diagnose_null_bytes(bzdata_folder_path: typing.Optional[str]) -> typing.Opti
     null_rows = {}  # type: typing.Dict[str, typing.List[NullRow]]
     for bzdone_file_path in bzdone_file_paths:
         total_row_count = 0
-        with open(bzdone_file_path, "r") as file_handler:
+        with open(bzdone_file_path, "r", encoding="utf-8", errors="ignore") as file_handler:
             for row in file_handler:
                 total_row_count += 1
                 if "\0" in row:
