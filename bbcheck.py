@@ -665,6 +665,12 @@ def parse_bz_done_files(
     return results
 
 
+def sanitise_xml_input(xml_file_path: str) -> str:
+    """Remove any initial / trailing whitespace in XML files"""
+    with open(xml_file_path, 'r') as file_handler:
+        return file_handler.read().strip()
+
+
 def get_excludes(bzdata_folder_path: str) -> typing.Optional[typing.List[ExcludeRule]]:
     """Read exclude rules from Backblaze config files and return list of ExcludeRule dataclasses"""
     log = logging.getLogger(__name__)
@@ -693,7 +699,7 @@ def get_excludes(bzdata_folder_path: str) -> typing.Optional[typing.List[Exclude
         return None
     excludes = []
     for exclude_file_path in exclude_file_paths:
-        root = xml.etree.ElementTree.parse(exclude_file_path).getroot()
+        root = xml.etree.ElementTree.fromstring(sanitise_xml_input(exclude_file_path))
         for item in root:
             plat = item.attrib["plat"]
             os_version = None if item.attrib["osVers"] == "*" else item.attrib["osVers"]
@@ -745,7 +751,7 @@ def get_excludes(bzdata_folder_path: str) -> typing.Optional[typing.List[Exclude
     if not os.path.isfile(bzinfo_path):
         log.error("bzinfo.xml file not found in expected location '%s'", bzinfo_path)
         return None
-    root = xml.etree.ElementTree.parse(bzinfo_path).getroot()
+    root = xml.etree.ElementTree.fromstring(sanitise_xml_input(bzinfo_path))
     excludes_tag = root.findall("globalexcludes")
     if len(excludes_tag) != 1:
         log.warning(
