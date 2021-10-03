@@ -78,7 +78,7 @@ Usage example (Windows) incorporating flags:
 
 This script runs entirely locally; neither Backblaze nor any other third party services are communicated with.
 
-Script output is stored by default in the folder the script is executed in. If `-l` or `-d` is used to output logs to a file, these are stored by default in folder `bbcheck_logs` (created in the folder that the script is executed in). Debug logs capture system details (including Python version and operating system), command line arguments used, and events occurring during script execution.
+Script output is stored by default in the folder the script is executed in. If `-l` or `-d` is used to output logs to a file, these are stored by default in folder `bbcheck_logs` (created in the folder that the script is executed in). Debug logs may contain sensitive information, such as system details (including Python version and operating system), command line arguments used, and events occurring with data processed during script execution.
 
 Full uninstallation can be achieved by:
 
