@@ -646,11 +646,12 @@ def parse_bz_done_files(
             # logs with a '=' event - the 'original', 'duped' file will be expunged with an 'x'
             # even though the file itself hasn't been deleted. Basically these two flags aren't
             # useful for our filtering purpose here
-            if metadata.instruction == "!" or metadata.instruction == "x":
+            if metadata.instruction == "!" or metadata.instruction == "x" or metadata.instruction == "-":
                 continue
             # If it's not a create event, then the file has been deleted, so don't check further
-            if metadata.instruction not in EXIST_FLAGS:
-                break
+            # If an external drive was removed and reattached we will have '-' mixed in
+            # if metadata.instruction not in EXIST_FLAGS:
+            #    break
             # If the file has '!' then it's been split in the logs (i.e. > 100MB), so we can't
             # use the hash value - so set placeholder '-'
             if "!" in [metadata.instruction for metadata in bz_metadata[file_path]]:
@@ -759,7 +760,8 @@ def get_excludes(bzdata_folder_path: str) -> typing.Optional[typing.List[Exclude
         )
     file_ext_excludes = excludes_tag[0].attrib["excludefiletypes"]
     for file_ext in file_ext_excludes.split(","):
-        excludes.append(ExcludeRule(has_file_extension=file_ext))
+        if file_ext.strip():
+            excludes.append(ExcludeRule(has_file_extension=file_ext))
     do_backup_tag = root.findall("do_backup")
     if len(do_backup_tag) != 1:
         log.warning(
@@ -807,6 +809,7 @@ def check_backup(
     only_check_size_flag: bool,
     hash_file_paths: typing.Optional[typing.List[str]],
     datetime_string: str,
+    oldest_age: int,
 ) -> typing.Optional[bool]:
     """Check if files in source path(s) are found as records in Backblaze log data"""
     log = logging.getLogger(__name__)
@@ -906,7 +909,10 @@ def check_backup(
     source_size = 0
     files_failing_filter = []
     recent_files = []
+    older_files = []
     day_before = datetime.datetime.now() - datetime.timedelta(days=1)
+    if oldest_age:
+        oldest_age_before = datetime.datetime.now() - datetime.timedelta(days=oldest_age)
     for source_path in source_paths:
         log.debug("Processing source path '%s'", source_path)
         if os.path.isdir(source_path):
@@ -983,6 +989,10 @@ def check_backup(
             if ctime > day_before or mtime > day_before:
                 recent_files.append(file_path)
                 continue
+            if oldest_age:
+                if ctime < oldest_age_before and mtime < oldest_age_before:
+                    older_files.append(file_path)
+                    continue
         except FileNotFoundError:
             log.warning("File '%s' was deleted before it could be checked", file_path)
             continue
@@ -1002,11 +1012,14 @@ def check_backup(
                             lookup_value = file_size
                         else:
                             lookup_value = hash_file_at_path(file_path, "sha1")
-                except PermissionError:
-                    log.warning("PermissionError on: '%s' (try running script as admin)", file_path)
+                except PermissionError as e:
+                    log.warning("PermissionError '%s' on: '%s' (try running script as admin)", e, file_path)
                     continue
-                except OSError:
-                    log.warning("OSError on: '%s' (file possibly deleted)", file_path)
+                except FileNotFoundError as e:
+                    log.warning("FileNotFoundError '%s' on: '%s' (file possibly deleted)", e, file_path)
+                    continue
+                except OSError as e:
+                    log.warning("OSError '%s' on: '%s' (file possibly deleted)", e, file_path)
                     continue
         except FileNotFoundError:
             log.warning("File '%s' was deleted before it could be checked", file_path)
@@ -1030,6 +1043,25 @@ def check_backup(
             file_handler.write("Recent file path\n")
             for recent_file in recent_files:
                 file_handler.write("{}\n".format(recent_file))
+    
+    # If we have files created or modified older than user specifed, inform user and write out details
+    if older_files:
+        output_filename = "{}_backblaze_older_files_not_processed.txt".format(datetime_string)
+        if output_folder is not None:
+            output_path = os.path.join(output_folder, output_filename)
+        else:
+            output_path = output_filename
+        log.info(
+            "%s files were identified created/updated older than %s day(s) specified with --oldest-age,"
+            " which have not been checked - details written to output file '%s'",
+            len(older_files),
+            str(oldest_age),
+            output_path,
+        )
+        with open(output_path, "w", encoding="utf-8", errors="ignore") as file_handler:
+            file_handler.write("Older file path\n")
+            for older_file in older_files:
+                file_handler.write("{}\n".format(older_file))
 
     # Identify files in source folders that don't have paths or matching hashes in BB log data
     uploaded_file_list = []
@@ -1173,6 +1205,16 @@ def main() -> None:
             " hash data during script execution"
         ),
     )
+    parser.add_argument(
+        "-a",
+        "--oldest-age",
+        type=int,
+        help=(
+            "The oldest age a file's modification or creation time should be for checking"
+            " This is useful for verifying recent files only, so you can run this script"
+            " every N days and check for new or updated files in that time."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1199,6 +1241,7 @@ def main() -> None:
         only_check_size_flag=args.only_check_size,
         hash_file_paths=args.hash_files,
         datetime_string=datetime_string,
+        oldest_age=args.oldest_age,
     )
 
     # Mention any errors and close out

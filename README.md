@@ -30,6 +30,7 @@ Progress is reported within the console (and if specified, to log files). At scr
 2. `[datetime]_backblaze_mismatch_files.txt`: list of files whose path is either not present in Backblaze log data, or the path is present but SHA1/size metadata does not match between the local file and Backblaze log data. Files listed in this output may not have been uploaded to Backblaze successfully - but be aware that there are likely to be false positives (see Known Issues below).
 3. `[datetime]_backblaze_excluded_by_filter_files.txt`: list of files that have not been uploaded to Backblaze due to filter/exclusion rules, with details of which rules the files are 'failing' on.
 4. `[datetime]_backblaze_recent_files_not_processed.txt`: list of files created or modified in the last 24 hours are listed in this output and not processed during script execution (as Backblaze may not have had time to upload them yet).
+5. `[datetime]_backblaze_older_files_not_processed.txt`: list of files created or modified before the value specified with `--oldest age [int]` that were not checked.
 
 ## Recommended usage
 
@@ -63,6 +64,7 @@ Flags can be viewed using: `python3 bbcheck.py --help`, and are as follows:
 - `-b [str]` or `--bzdata-folder [str]`: by default, the script will attempt to read Backblaze configuration and log data from standard client install locations for Windows and Mac. An alternative path to the `bzdata` folder may be provided with this flag.
 - `-s` or `--only-check-size`: by default, SHA1 hash values will be generated for the integrity check for files <= 100MB in size. Hash data may take a long time to generate for large source folders; this flag sets the script to instead check integrity using file size metadata, which should execute quickly (but is not a true integrity check and is therefore less reliable).
 - `--hash-files [str ... str]`: instead of generating SHA1 hash data during script execution, hash file(s) created using the `hash` mode in [Vericopy](https://github.com/john-corcoran/vericopy) may be used as a lookup. This approach allows for quick successive executions of this script, and is reliable on condition that files within the source folders are not changed between script executions.
+- `-a [int]` or `--oldest-age [int]`: Only check files that were created or modified after `[int]` days ago. Useful for rerunning the script on a schedule but remember the script does not check files created/modified less than 24 hours prior so always add 1 extra day to your schedule (example: for weekly checks, use 8 not 7).
 
 Usage example (Windows) incorporating flags:
 
